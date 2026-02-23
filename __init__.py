@@ -31,21 +31,18 @@ def _apply_heartlib_patches():
 
         _original_setup_caches = HeartMuLa.setup_caches
 
-        def _patched_setup_caches(self, batch_size, dtype=None, device=None):
-            _original_setup_caches(self, batch_size, dtype=dtype, device=device)
+        def _patched_setup_caches(self, batch_size, *args, **kwargs):
+            _original_setup_caches(self, batch_size, *args, **kwargs)
             # RoPE init fix: torchtune >= 0.5 requires explicit rope_init()
             for m in self.modules():
                 if hasattr(m, "rope_init"):
                     m.rope_init()
-                    if device is not None:
-                        m.to(device)
-                    else:
-                        # Try to move to same device as model
-                        try:
-                            p = next(self.parameters())
-                            m.to(p.device)
-                        except StopIteration:
-                            pass
+                    # Move RoPE buffers to same device as model
+                    try:
+                        p = next(self.parameters())
+                        m.to(p.device)
+                    except StopIteration:
+                        pass
 
         HeartMuLa.setup_caches = _patched_setup_caches
         print("[ForgeAI] HeartMuLa RoPE patch applied")
