@@ -24,7 +24,7 @@ Transcribe lyrics from audio using Whisper.
 ### 1. Clone into ComfyUI custom_nodes
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/YOUR_USERNAME/ForgeAI-HeartMuLa.git
+git clone https://github.com/PavonicAI/ForgeAI-HeartMuLa.git
 ```
 
 ### 2. Install dependencies
@@ -32,17 +32,21 @@ git clone https://github.com/YOUR_USERNAME/ForgeAI-HeartMuLa.git
 pip install -r ForgeAI-HeartMuLa/requirements.txt
 ```
 
-### 3. Download HeartMuLa models
-Download from [HuggingFace](https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B) and place in:
+### 3. Download models
+
+**Recommended: Use our pre-quantized 4-bit checkpoint (fits on 16 GB GPUs):**
+
+Download [**ForgeAI/HeartMuLa-3B-4bit**](https://huggingface.co/PavonicAI/HeartMuLa-3B-4bit) and place in `ComfyUI/models/HeartMuLa/HeartMuLa-oss-3B/`
+
+You also need HeartCodec + tokenizer from the [original repo](https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B):
+
 ```
 ComfyUI/models/HeartMuLa/
-  ├── HeartMuLa-oss-3B/
-  ├── HeartCodec-oss/
-  ├── tokenizer.json
-  └── gen_config.json
+  ├── HeartMuLa-oss-3B/    ← our 4-bit checkpoint OR original weights
+  ├── HeartCodec-oss/       ← from original repo
+  ├── tokenizer.json        ← from original repo
+  └── gen_config.json       ← from original repo
 ```
-
-Or use our pre-quantized 4-bit checkpoint: [PavonicAI/HeartMuLa-3B-4bit](https://huggingface.co/PavonicAI/HeartMuLa-3B-4bit)
 
 ## Compatibility Fixes Included
 
