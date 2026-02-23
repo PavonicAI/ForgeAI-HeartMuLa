@@ -1,0 +1,24 @@
+[project]
+name = "forgeai-heartmula"
+version = "1.0.0"
+description = "ComfyUI custom nodes for HeartMuLa AI music generation — optimized for 16 GB GPUs"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+dependencies = [
+    "heartlib",
+    "bitsandbytes>=0.43",
+    "soundfile",
+    "transformers>=4.57",
+    "torchtune>=0.4",
+    "tokenizers",
+    "pydub",
+]
+
+[project.urls]
+Repository = "https://github.com/PavonicAI/ForgeAI-HeartMuLa"
+Issues = "https://github.com/PavonicAI/ForgeAI-HeartMuLa/issues"
+
+[tool.comfy]
+PublisherId = "forgeai"
+DisplayName = "ForgeAI HeartMuLa"
+Icon = ""

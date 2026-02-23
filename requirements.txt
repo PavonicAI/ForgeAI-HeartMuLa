@@ -1,0 +1,8 @@
+heartlib
+bitsandbytes>=0.43
+soundfile
+transformers>=4.57
+torchtune>=0.4
+tokenizers
+pydub
+librosa
