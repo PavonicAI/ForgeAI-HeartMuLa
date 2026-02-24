@@ -1,7 +1,7 @@
 [project]
 name = "forgeai-heartmula"
-version = "1.0.0"
-description = "ComfyUI custom nodes for HeartMuLa AI music generation — optimized for 16 GB GPUs"
+version = "1.1.0"
+description = "ComfyUI custom nodes for HeartMuLa AI music generation - optimized for 16 GB GPUs"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 dependencies = [

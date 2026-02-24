@@ -8,6 +8,8 @@ Fixes included:
   - OOM fix: model.cpu() offload before codec decode
   - soundfile instead of torchaudio (no torchcodec needed)
   - bitsandbytes 4-bit/8-bit quantization support
+  - Pre-quantized 4-bit checkpoint auto-detection
+  - Fade-out post-processing
 """
 
 import os
@@ -20,6 +22,26 @@ import folder_paths
 # Model path setup
 # ---------------------------------------------------------------------------
 HEARTMULA_DIR = os.path.join(folder_paths.models_dir, "HeartMuLa")
+
+# ---------------------------------------------------------------------------
+# Scan for available HeartMuLa models
+# ---------------------------------------------------------------------------
+def _scan_model_folders():
+    """Scan HeartMuLa directory for available model folders."""
+    if not os.path.exists(HEARTMULA_DIR):
+        return ["HeartMuLa-oss-3B"]
+
+    folders = []
+    skip = {"HeartCodec-oss", "heartlib", "HeartMuLa-oss-whisper"}
+    for name in sorted(os.listdir(HEARTMULA_DIR)):
+        path = os.path.join(HEARTMULA_DIR, name)
+        if os.path.isdir(path) and name not in skip:
+            # Check if it looks like a model folder (has config.json)
+            if os.path.exists(os.path.join(path, "config.json")):
+                folders.append(name)
+
+    return folders if folders else ["HeartMuLa-oss-3B"]
+
 
 # ---------------------------------------------------------------------------
 # Patch heartlib on import: RoPE init fix for torchtune >= 0.5
@@ -57,16 +79,18 @@ _apply_heartlib_patches()
 # Pipeline cache (keep models loaded between runs)
 # ---------------------------------------------------------------------------
 _pipeline_cache = {}
-_codec_cache = {}
 
 
 def _get_device():
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _load_pipeline(model_version="3B", quantize="none"):
-    """Load HeartMuLa generation pipeline with optional quantization."""
-    cache_key = f"{model_version}_{quantize}"
+def _load_pipeline(model_folder, quantize="none"):
+    """Load HeartMuLa generation pipeline with optional quantization.
+
+    model_folder: name of the folder inside HeartMuLa/ (e.g. HeartMuLa-4bit-3B)
+    """
+    cache_key = f"{model_folder}_{quantize}"
     if cache_key in _pipeline_cache:
         return _pipeline_cache[cache_key]
 
@@ -89,11 +113,34 @@ def _load_pipeline(model_version="3B", quantize="none"):
         codec_path, device_map=device, ignore_mismatched_sizes=True
     )
 
-    # --- Load HeartMuLa model ---
+    # --- Determine model path and quantization config ---
+    model_path = os.path.join(HEARTMULA_DIR, model_folder)
     bnb_config = None
     device_map = None
 
-    if quantize == "4bit":
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Model not found at {model_path}. "
+            f"Download from https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B "
+            f"or https://huggingface.co/PavonicAI/HeartMuLa-3B-4bit"
+        )
+
+    # Check if the model folder has a baked-in quantization config
+    import json
+    config_path = os.path.join(model_path, "config.json")
+    has_baked_quant = False
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            model_cfg = json.load(f)
+        if "quantization_config" in model_cfg:
+            has_baked_quant = True
+            print(f"[ForgeAI] Model has baked-in quantization config")
+
+    if has_baked_quant:
+        # Pre-quantized checkpoint — just load it, config.json has everything
+        device_map = "cuda:0"
+        print(f"[ForgeAI] Loading pre-quantized checkpoint: {model_folder}")
+    elif quantize == "4bit":
         from transformers import BitsAndBytesConfig
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -101,19 +148,16 @@ def _load_pipeline(model_version="3B", quantize="none"):
             bnb_4bit_quant_type="nf4",
         )
         device_map = "cuda:0"
+        print(f"[ForgeAI] Quantizing on-the-fly (4bit): {model_folder}")
     elif quantize == "8bit":
         from transformers import BitsAndBytesConfig
         bnb_config = BitsAndBytesConfig(load_in_8bit=True)
         device_map = "cuda:0"
+        print(f"[ForgeAI] Quantizing on-the-fly (8bit): {model_folder}")
+    else:
+        print(f"[ForgeAI] Loading full precision: {model_folder}")
 
-    model_path = os.path.join(HEARTMULA_DIR, f"HeartMuLa-oss-{model_version}")
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(
-            f"HeartMuLa-oss-{model_version} not found at {model_path}. "
-            f"Download from https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B"
-        )
-
-    print(f"[ForgeAI] Loading HeartMuLa-oss-{model_version} ({quantize})...")
+    print(f"[ForgeAI] Loading {model_folder} ({quantize})...")
     model = HeartMuLa.from_pretrained(
         model_path,
         dtype=dtype,
@@ -132,7 +176,6 @@ def _load_pipeline(model_version="3B", quantize="none"):
     if not os.path.exists(gen_config_path):
         raise FileNotFoundError(f"gen_config.json not found at {gen_config_path}")
 
-    import json
     with open(gen_config_path, encoding="utf-8") as f:
         gen_cfg = json.load(f)
 
@@ -165,7 +208,7 @@ def _generate_music(
     cfg_scale: float = 1.5,
 ):
     """Generate music from lyrics. Returns (waveform_tensor, sample_rate)."""
-    from tqdm import tqdm
+    from comfy.utils import ProgressBar
 
     model = pipeline_data["model"]
     codec = pipeline_data["codec"]
@@ -230,7 +273,7 @@ def _generate_music(
         torch.arange(prompt_len, dtype=torch.long), cfg_scale
     ).to(device)
 
-    # --- Generate frames ---
+    # --- Generate frames with ComfyUI progress bar ---
     max_audio_frames = (max_duration_sec * 1000) // 80
     frames = []
 
@@ -250,7 +293,8 @@ def _generate_music(
     frames.append(curr_token[0:1])
 
     print(f"[ForgeAI] Generating {max_duration_sec}s of audio...")
-    for i in tqdm(range(max_audio_frames), desc="[ForgeAI] Generating"):
+    pbar = ProgressBar(max_audio_frames)
+    for i in range(max_audio_frames):
         padded_token = (
             torch.ones(
                 (curr_token.shape[0], parallel_number),
@@ -279,6 +323,7 @@ def _generate_music(
             print(f"[ForgeAI] Audio EOS reached at frame {i}")
             break
         frames.append(curr_token[0:1])
+        pbar.update(1)
 
     # --- Decode audio (with OOM fix: offload model first) ---
     frames_tensor = torch.stack(frames).permute(1, 2, 0).squeeze(0)
@@ -299,29 +344,82 @@ def _generate_music(
 
 
 # ---------------------------------------------------------------------------
-# Save audio to file (WAV or MP3)
+# Post-processing: fade out
 # ---------------------------------------------------------------------------
-def _save_audio(wav_tensor, sample_rate, save_path, output_format="wav"):
-    """Save audio tensor to file."""
+def _apply_fade_out(wav_np, sample_rate, fade_seconds=3.0):
+    """Apply a smooth fade-out to the last N seconds of audio."""
+    fade_samples = int(fade_seconds * sample_rate)
+    if fade_samples >= len(wav_np):
+        fade_samples = len(wav_np)
+
+    # Create linear fade curve
+    fade_curve = np.linspace(1.0, 0.0, fade_samples)
+
+    if wav_np.ndim == 2:
+        # Multi-channel: apply to all channels
+        wav_np[-fade_samples:] *= fade_curve[:, np.newaxis]
+    else:
+        wav_np[-fade_samples:] *= fade_curve
+
+    return wav_np
+
+
+# ---------------------------------------------------------------------------
+# Save audio to file (WAV or MP3) — uses PyAV for MP3 (no ffmpeg needed)
+# ---------------------------------------------------------------------------
+def _save_audio(wav_tensor, sample_rate, save_path, output_format="wav",
+                fade_out_seconds=0.0):
+    """Save audio tensor to file. Uses PyAV for MP3 encoding."""
     import soundfile as sf
 
     wav_np = wav_tensor.cpu().float().numpy()
     if wav_np.ndim == 2:
         wav_np = wav_np.T  # soundfile expects (samples, channels)
 
+    # Apply fade-out if requested
+    if fade_out_seconds > 0:
+        wav_np = _apply_fade_out(wav_np, sample_rate, fade_out_seconds)
+        print(f"[ForgeAI] Applied {fade_out_seconds}s fade-out")
+
     if output_format == "mp3":
-        # Save as WAV first, then convert to MP3 via pydub/ffmpeg
-        wav_path = save_path.rsplit(".", 1)[0] + ".wav"
-        sf.write(wav_path, wav_np, sample_rate)
         try:
-            from pydub import AudioSegment
-            audio = AudioSegment.from_wav(wav_path)
-            audio.export(save_path, format="mp3", bitrate="320k")
-            os.remove(wav_path)  # clean up temp WAV
+            import av
+
+            # Encode MP3 using PyAV (bundled with ComfyUI, no external ffmpeg needed)
+            container = av.open(save_path, mode="w")
+            channels = wav_np.shape[1] if wav_np.ndim == 2 else 1
+            stream = container.add_stream("libmp3lame", rate=sample_rate)
+            stream.bit_rate = 320000  # 320 kbps
+            stream.layout = "stereo" if channels > 1 else "mono"
+
+            # PyAV expects (samples, channels) float32
+            if wav_np.ndim == 1:
+                wav_np = wav_np.reshape(-1, 1)
+
+            # Process in chunks to avoid memory issues
+            chunk_size = sample_rate  # 1 second chunks
+            for start in range(0, len(wav_np), chunk_size):
+                chunk = wav_np[start : start + chunk_size]
+                frame = av.AudioFrame.from_ndarray(
+                    chunk.T,  # PyAV expects (channels, samples)
+                    format="fltp",
+                    layout=stream.layout.name,
+                )
+                frame.sample_rate = sample_rate
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+
+            # Flush encoder
+            for packet in stream.encode(None):
+                container.mux(packet)
+            container.close()
             print(f"[ForgeAI] Saved MP3: {save_path}")
-        except ImportError:
-            print("[ForgeAI] pydub not installed, saving as WAV instead")
-            save_path = wav_path
+
+        except Exception as e:
+            # Fallback to WAV if MP3 encoding fails
+            print(f"[ForgeAI] MP3 encoding failed ({e}), saving as WAV")
+            save_path = save_path.rsplit(".", 1)[0] + ".wav"
+            sf.write(save_path, wav_np, sample_rate)
             print(f"[ForgeAI] Saved WAV: {save_path}")
     else:
         sf.write(save_path, wav_np, sample_rate)
@@ -345,6 +443,7 @@ class ForgeAI_HeartMuLa_Generate:
 
     @classmethod
     def INPUT_TYPES(cls):
+        model_folders = _scan_model_folders()
         return {
             "required": {
                 "lyrics": (
@@ -357,16 +456,19 @@ class ForgeAI_HeartMuLa_Generate:
                 "tags": (
                     "STRING",
                     {
-                        "multiline": False,
-                        "default": "pop, upbeat, female vocal, 120bpm",
+                        "default": "warm, Piano, pop, acoustic guitar",
                     },
                 ),
+                "model": (model_folders,),
+                "quantize": (["4bit", "8bit", "none"],),
                 "duration_seconds": (
                     "INT",
-                    {"default": 30, "min": 5, "max": 120, "step": 5},
+                    {"default": 120, "min": 5, "max": 240, "step": 5},
                 ),
-                "quantize": (["4bit", "8bit", "none"],),
-                "model_version": (["3B"],),
+                "cfg_scale": (
+                    "FLOAT",
+                    {"default": 2.0, "min": 1.0, "max": 5.0, "step": 0.1},
+                ),
                 "temperature": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.05},
@@ -375,9 +477,9 @@ class ForgeAI_HeartMuLa_Generate:
                     "INT",
                     {"default": 50, "min": 1, "max": 500, "step": 1},
                 ),
-                "cfg_scale": (
+                "fade_out": (
                     "FLOAT",
-                    {"default": 1.5, "min": 1.0, "max": 5.0, "step": 0.1},
+                    {"default": 3.0, "min": 0.0, "max": 10.0, "step": 0.5},
                 ),
                 "output_format": (["wav", "mp3"],),
                 "filename_prefix": (
@@ -397,17 +499,18 @@ class ForgeAI_HeartMuLa_Generate:
         self,
         lyrics,
         tags,
-        duration_seconds,
+        model,
         quantize,
-        model_version,
+        duration_seconds,
+        cfg_scale,
         temperature,
         top_k,
-        cfg_scale,
+        fade_out,
         output_format,
         filename_prefix,
     ):
-        # Load pipeline
-        pipeline = _load_pipeline(model_version, quantize)
+        # Load pipeline (model is now folder name directly)
+        pipeline = _load_pipeline(model, quantize)
 
         # Generate audio
         wav, sample_rate = _generate_music(
@@ -427,8 +530,10 @@ class ForgeAI_HeartMuLa_Generate:
         filename = f"{filename_prefix}_{timestamp}.{ext}"
         save_path = os.path.join(self.output_dir, filename)
 
-        # Save file
-        actual_path = _save_audio(wav, sample_rate, save_path, output_format)
+        # Save file (with optional fade-out)
+        actual_path = _save_audio(wav, sample_rate, save_path, output_format,
+                                  fade_out_seconds=fade_out)
+        actual_filename = os.path.basename(actual_path)
 
         # Build ComfyUI AUDIO output
         wav_np = wav.cpu().float().numpy()
@@ -439,7 +544,19 @@ class ForgeAI_HeartMuLa_Generate:
             waveform = waveform.T
         audio_output = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
 
-        return (audio_output, actual_path)
+        # Return with UI dict so ComfyUI shows audio preview in assets
+        return {
+            "ui": {
+                "audio": [
+                    {
+                        "filename": actual_filename,
+                        "subfolder": "",
+                        "type": "output",
+                    }
+                ]
+            },
+            "result": (audio_output, actual_path),
+        }
 
 
 # ===========================================================================
