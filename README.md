@@ -19,6 +19,57 @@ Transcribe lyrics from audio using Whisper.
 - **Input**: Audio (ComfyUI AUDIO type)
 - **Output**: Transcribed lyrics text
 
+## Tag Guide
+
+HeartMuLa uses comma-separated tags to control the style of generated music. **Genre is the most important tag** — always put it first.
+
+### Tag Format
+```
+genre:pop, emotional, synth, warm, female voice
+```
+
+### Available Tag Categories
+
+| Category | Examples | Priority |
+|---|---|---|
+| **Genre** | `pop`, `rock`, `electronic`, `jazz`, `reggae`, `j-pop` | Highest |
+| **Timbre** | `synth`, `acoustic`, `warm`, `bright`, `deep` | High |
+| **Gender** | `male voice`, `female voice` | High |
+| **Mood** | `emotional`, `energetic`, `chill`, `dark`, `happy` | Medium |
+| **Instrument** | `piano`, `guitar`, `bass`, `drums`, `strings` | Medium |
+| **Scene** | `dance`, `ballad`, `anthem`, `lullaby` | Low |
+| **Region** | `latin`, `french`, `japanese`, `korean` | Low |
+| **Tempo** | `fast tempo`, `slow tempo`, `moderate tempo` | Low |
+
+### Structure Tags (in Lyrics field)
+Use structure tags in your lyrics to control song sections:
+```
+[intro]
+[verse]
+Your verse lyrics here...
+[chorus]
+Your chorus lyrics here...
+[bridge]
+Bridge lyrics...
+[outro]
+```
+
+### Multi-Language Lyrics
+HeartMuLa supports lyrics in multiple languages including English, Spanish, French, Japanese, and more. Simply write your lyrics in the desired language.
+
+## CFG Scale Guide
+
+CFG (Classifier-Free Guidance) controls how strictly the model follows your tags. Range: **1.0 — 10.0**
+
+| CFG | Best For | Notes |
+|---|---|---|
+| **2.0** | Pop, Ballads, Emotional | Sweet spot for clean vocals |
+| **3.0** | Rock, Latin, Uptempo | More energy, stronger instrumentation |
+| **4.0+** | Electronic, Dance, EDM | Bold sound, may introduce artifacts |
+| **5.0+** | Experimental | Use with caution |
+
+**Recommendation:** Start with **CFG 2.0** and increase if you need more energy or harder genres.
+
 ## Installation
 
 ### 1. Clone into ComfyUI custom_nodes
@@ -58,10 +109,13 @@ All fixes are applied automatically — no manual patching needed:
 | `RoPE cache not built` (torchtune >= 0.5) | Fixed |
 | OOM on 16 GB GPUs | Fixed (model CPU offload) |
 | `torchcodec` missing (torchaudio >= 2.10) | Fixed (uses soundfile) |
+| CFG 1.0 crash (batch_size mismatch) | Fixed (auto-clamp to 1.1) |
 
 ## Hardware Tested
 
 - NVIDIA RTX 5070 Ti (16 GB) with 4-bit quantization
+- Stable for hours of continuous generation
+- ~13 GB VRAM during generation, ~8 GB during encoding
 
 ## License
 

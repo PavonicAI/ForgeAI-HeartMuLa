@@ -257,7 +257,12 @@ def _generate_music(
     tokens_mask = torch.zeros_like(tokens, dtype=torch.bool)
     tokens_mask[:, -1] = True
 
-    bs_size = 2 if cfg_scale != 1.0 else 1
+    # CFG 1.0 causes batch_size mismatch in attention layers
+    # Clamp to minimum 1.1 to always use batch_size=2
+    if cfg_scale <= 1.0:
+        print(f"[ForgeAI] CFG {cfg_scale} clamped to 1.1 (minimum for stable generation)")
+        cfg_scale = 1.1
+    bs_size = 2
 
     def _cfg_cat(tensor, cfg_s):
         tensor = tensor.unsqueeze(0)
@@ -467,7 +472,7 @@ class ForgeAI_HeartMuLa_Generate:
                 ),
                 "cfg_scale": (
                     "FLOAT",
-                    {"default": 2.0, "min": 1.0, "max": 5.0, "step": 0.1},
+                    {"default": 2.0, "min": 1.0, "max": 10.0, "step": 0.1},
                 ),
                 "temperature": (
                     "FLOAT",

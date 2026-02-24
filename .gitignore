@@ -1,0 +1,22 @@
+# Generated audio files
+*.mp3
+*.wav
+demos/
+
+# Build artifacts
+node.zip
+nul
+
+# Tools (internal)
+analyze_audio.py
+post_discussion.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
